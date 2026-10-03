@@ -1,79 +1,86 @@
-import os, sqlite3, logging
+import os
+import sqlite3
+import logging
 from decimal import Decimal
 from datetime import datetime
-from telegram import ReplyKeyboardMarkup, KeyboardButton, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import ReplyKeyboardMarkup, Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN") or ""
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 DATABASE_PATH = "debt.db"
 logging.basicConfig(level=logging.INFO)
 
-def fmt(a: Decimal): return f"{a:.0f}" if a == int(a) else f"{a:.2f}"
+def fmt(a: Decimal):
+    return f"{a:.0f}" if a == int(a) else f"{a:.2f}"
 
 def init_db():
-    with sqlite3.connect(DATABASE_PATH) as c:
-        c.execute("CREATE TABLE IF NOT EXISTS debt_entries (id INTEGER PRIMARY KEY, user_id INTEGER, debtor_name TEXT, amount TEXT, created_at TEXT, due_date TEXT)")
-        c.commit()
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS debts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, amount TEXT, comment TEXT, created_at TEXT)")
+        conn.commit()
+
 init_db()
 
-def book(uid):
-    with sqlite3.connect(DATABASE_PATH) as c:
-        rows=c.execute("SELECT debtor_name,amount,created_at,due_date FROM debt_entries WHERE user_id=? ORDER BY id DESC",(uid,)).fetchall()
-    totals,last,due={}, {}, {}
-    for n,a,ca,dd in rows:
-        k=n.casefold()
-        if k not in totals: totals[k]=[n,Decimal("0")]; last[k]=ca or ""; due[k]=dd or ""
-        totals[k][1]+=Decimal(a)
-        if ca and ca>last[k]: last[k]=ca; due[k]=dd or ""
-    bal=sorted([(nm,tt) for nm,tt in totals.values() if tt>0], key=lambda x:x[1], reverse=True)
-    total=sum((x[1] for x in bal),Decimal("0"))
-    lines=["📒 Дафтари карз (аз калонтарин):"]
-    for i,(nm,am) in enumerate(bal,1):
-        d=last.get(nm.casefold(),"")[:10]; dd=due.get(nm.casefold(),"")
-        lines.append(f"{i}. {nm} — {fmt(am)} сомонӣ — {d}"+(f" ⏰ то {dd}" if dd else ""))
-    if not bal: lines.append("Ҳоло қарз нест.")
-    lines+=["",f"💰 Ҷамъ: {fmt(total)} сомонӣ",f"👥 {len(bal)} нафар"]
-    return lines
+def get_keyboard():
+    return ReplyKeyboardMarkup([["📋 Список долгов"], ["➕ Добавить долг", "💰 Долги мне"]], resize_keyboard=True)
 
-def hist(uid,q):
-    with sqlite3.connect(DATABASE_PATH) as c:
-        rows=c.execute("SELECT debtor_name,amount,created_at,due_date FROM debt_entries WHERE user_id=? AND debtor_name LIKE? ORDER BY id DESC",(uid,f"%{q}%")).fetchall()
-    if not rows: return [f"🔍 {q} ёфт нашуд."]
-    tot=Decimal("0"); lines=[f"📜 Тарих: {rows[0][0]}:"]
-    for _,a,ca,dd in rows:
-        am=Decimal(a); tot+=am; lines.append(f"{ca[:16]} {'+' if am>0 else ''}{fmt(am)}"+(f" (то {dd})" if dd else ""))
-    lines.append(f"\n💰 Ҷамъ: {fmt(tot)} сомонӣ"); return lines
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Я бот для учета долгов.\n\nНапиши например:\n`Али 5000 за обед`\n\nИли используй кнопки:", reply_markup=get_keyboard(), parse_mode="Markdown")
 
-async def start(update, context):
-    await update.message.reply_text("Салом! 👋\nАли 1000 - қарз\nАли -500 - баргардонд\nАли 1000 то 2026-10-15 - бо мӯҳлат\n/qarz - ҳама\n/qarz Али - тарих\n/toza Али - тоза", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("/qarz")]],resize_keyboard=True))
+async def add_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text.startswith("/") or text in ["📋 Список долгов", "➕ Добавить долг", "💰 Долги мне"]:
+        return
 
-async def qarz(update, context):
-    lines=hist(update.effective_user.id," ".join(context.args)) if context.args else book(update.effective_user.id)
-    await update.message.reply_text("\n".join(lines))
+    parts = text.split()
+    if len(parts) < 2:
+        await update.message.reply_text("Напиши так: Имя Сумма [комментарий]\nПример: Али 5000 за обед")
+        return
 
-async def toza(update, context):
-    if not context.args: await update.message.reply_text("Нависед: /toza Али"); return
-    name=" ".join(context.args)
-    with sqlite3.connect(DATABASE_PATH) as c:
-        cur=c.execute("DELETE FROM debt_entries WHERE user_id=? AND debtor_name LIKE?",(update.effective_user.id,f"%{name}%")); c.commit()
-    await update.message.reply_text(f"✅ {name} тоза шуд ({cur.rowcount})" if cur.rowcount else "❌ Ёфт нашуд.")
-
-async def txt(update, context):
-    t=update.message.text.strip(); due=""
-    if " то " in t: t,due=t.split(" то ",1); due=due.strip()[:10]
     try:
-        name,am_s=t.rsplit(maxsplit=1); am=Decimal(am_s.replace(",","."))
-        with sqlite3.connect(DATABASE_PATH) as c:
-            c.execute("INSERT INTO debt_entries (user_id,debtor_name,amount,created_at,due_date) VALUES (?,?,?,?,?)",(update.effective_user.id,name.strip(),str(am),datetime.now().isoformat(),due)); c.commit()
-        await update.message.reply_text(f"✅ Сабт: {name} {fmt(am)}"+(f" то {due}" if due else ""))
-    except: await update.message.reply_text("Намуна: Али 1000 ё Али 1000 то 2026-10-15")
+        name = parts[0]
+        amount_str = parts[1].replace(",", ".")
+        amount = Decimal(amount_str)
 
-def main():
-    ApplicationBuilder().token(BOT_TOKEN).build().add_handler(CommandHandler("start",start)).add_handler(CommandHandler("qarz",qarz)).add_handler(CommandHandler("toza",toza)).add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,txt)).run_polling()
-    # упростил для Render
+        comment = " ".join(parts[2:]) if len(parts) > 2 else ""
 
-if __name__=="__main__":
-    app=ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start",start)); app.add_handler(CommandHandler("qarz",qarz)); app.add_handler(CommandHandler("toza",toza))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,txt))
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("INSERT INTO debts (user_id, name, amount, comment, created_at) VALUES (?,?,?,?,?)",
+                      (update.effective_user.id, name, str(amount), comment, datetime.now().isoformat()))
+            conn.commit()
+
+        await update.message.reply_text(f"✅ Записал: {name} - {fmt(amount)} {comment}")
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка: {e}\nПример: Али 5000 за обед")
+
+async def list_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT name, amount, comment FROM debts WHERE user_id=? ORDER BY id DESC", (user_id,))
+        rows = c.fetchall()
+
+    if not rows:
+        await update.message.reply_text("Долгов пока нет.")
+        return
+
+    total = sum(Decimal(r[1]) for r in rows)
+    msg = "📋 *Твои долги:*\n\n"
+    for name, amount, comment in rows[:50]:
+        msg += f"• {name} - {fmt(Decimal(amount))} {comment}\n"
+    msg += f"\n*Итого: {fmt(total)}*"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def debts_to_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Функция 'Долги мне' скоро будет! Пока используй 'Список долгов'")
+
+if __name__ == "__main__":
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN не задан в Render!")
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex("^📋 Список долгов$"), list_debts))
+    app.add_handler(MessageHandler(filters.Regex("^💰 Долги мне$"), debts_to_me))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_debt))
     app.run_polling()
