@@ -5,18 +5,16 @@ FILE="debts.json"
 def load():
     if os.path.exists(FILE):
         try:
-            with open(FILE,"r",encoding="utf-8") as f:
-                return json.load(f)
+            with open(FILE,"r",encoding="utf-8") as f: return json.load(f)
         except: return {}
     return {}
 def save(d):
-    with open(FILE,"w",encoding="utf-8") as f:
-        json.dump(d,f,ensure_ascii=False)
+    with open(FILE,"w",encoding="utf-8") as f: json.dump(d,f,ensure_ascii=False)
 
 debts=load()
 
 async def start(u,c):
-    await u.message.reply_text("Али 200 = добавить\nНест Али = удалить\n/qarz = список\n/toza = очистить\n\nПример с сроком: Али 200 7 (на 7 дней)")
+    await u.message.reply_text("Али 200 = илова\nНест Али = нест\n/qarz = руйхат")
 
 async def qarz(u,c):
     if not debts:
@@ -24,79 +22,56 @@ async def qarz(u,c):
         return
     t=""
     for k,v in debts.items():
-        # v может быть число или dict
         s=v['s'] if isinstance(v,dict) else v
-        t+=f"{k}: {s}\n"
+        due=v.get('due') if isinstance(v,dict) else None
+        if due and due>0:
+            t+=f"{k}: {s}с - {due} руз монд\n"
+        else:
+            t+=f"{k}: {s}с\n"
     await u.message.reply_text(t)
-
-async def toza(u,c):
-    await u.message.reply_text("ХА нависед барои тоза кардан")
 
 async def txt(u,c):
     global debts
     m=u.message.text.strip()
     low=m.lower()
 
-    # ТОЗА с подтверждением
     if low=="ха":
         debts={}
         save(debts)
         await u.message.reply_text("Тоза шуд")
         return
 
-    # УДАЛЕНИЕ УМНОЕ - ищет по части имени!
     if low.startswith("нест"):
         name=low.replace("нест кун","").replace("нест","").strip()
-        if not name:
-            await u.message.reply_text("Кого? Напиши: Нест Аббос")
-            return
-        found=[]
-        for k in list(debts.keys()):
-            if name in k.lower(): # <-- главное! ищет внутри
-                found.append(k)
+        found=[k for k in debts.keys() if name in k.lower()]
         if not found:
-            await u.message.reply_text(f"Ёфт нашуд '{name}'. Дорем: {', '.join(debts.keys())}")
+            await u.message.reply_text(f"Ёфт нашуд. Хаст: {', '.join(debts.keys())}")
             return
-        for k in found:
-            del debts[k]
+        for k in found: del debts[k]
         save(debts)
         await u.message.reply_text(f"✅ Нест шуд: {', '.join(found)}")
         return
 
-    # ДОБАВЛЕНИЕ - правильно парсит
     try:
-        # убираем слово завтра/сегодня из суммы
         parts=m.split()
-        # находим число
         sum_idx=-1
-        sum_val=0
         for i,p in enumerate(parts):
-            if p.isdigit():
-                sum_idx=i
-                sum_val=int(p)
-                break
-        if sum_idx==-1:
-            raise ValueError
+            if p.isdigit(): sum_idx=i; break
+        if sum_idx==-1: raise ValueError
         name=" ".join(parts[:sum_idx]).strip()
+        sum_val=int(parts[sum_idx])
         # срок
-        due_text=" ".join(parts[sum_idx+1:]).lower()
-        due_days=0
-        if "завтра" in due_text: due_days=1
-        elif "пагоҳ" in due_text: due_days=1
-        elif due_text.isdigit(): due_days=int(due_text)
+        rest=" ".join(parts[sum_idx+1:]).lower()
+        due=0
+        if "завтра" in rest or "пагох" in rest: due=1
+        elif rest.isdigit(): due=int(rest)
+        elif "7" in rest: due=7
 
-        if not name:
-            raise ValueError
-
-        debts[name]= {'s':sum_val, 'due':due_days}
+        debts[name]={'s':sum_val,'due':due}
         save(debts)
-        txt=f"Қарзи {sum_val} барои {name} сабт шуд. Бақия: {sum_val}"
-        if due_days>0:
-            txt+=f"\n⏰ Муҳлат: {due_days} рӯз (то {(datetime.date.today()+datetime.timedelta(days=due_days))})"
-        await u.message.reply_text(txt)
-
+        await u.message.reply_text(f"Сабт: {name} = {sum_val} {f'+ {due} руз' if due else ''}")
     except:
-        await u.message.reply_text("Нависед: Аббос 500 или Аббос 500 7")
+        await u.message.reply_text("Мисол: Аббос 500 ё Аббос 500 7")
 
 def get_handlers():
-    return [CommandHandler("start",start),CommandHandler("qarz",qarz),CommandHandler("toza",toza),MessageHandler(filters.TEXT & ~filters.COMMAND, txt)]
+    return [CommandHandler("start",start),CommandHandler("qarz",qarz),MessageHandler(filters.TEXT & ~filters.COMMAND, txt)]
