@@ -63,10 +63,8 @@ async def debts_to_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Skoro budet!")
 
 if __name__ == "__main__":
-    if not BOT_TOKEN: raise ValueError("BOT_TOKEN ne zadan!")
-    threading.Thread(target=run_flask, daemon=True).start()
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
+    if not BOT_TOKEN: raise ValueError("BOT_TOKEN ne zadan!")    app = ApplicationBuilder().token(BOT_TOKEN).build()
+       threading.Thread(target=run_flask, daemon=True).start()app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^Spisok dolgov$"), list_debts))
     app.add_handler(MessageHandler(filters.Regex("^Dolgi mne$"), debts_to_me))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_debt))
