@@ -1,77 +1,104 @@
 from telegram.ext import *
-import datetime, os, json
+import json, os, datetime
 
-FILE="debts.json"
+FILE = "debts.json"
+
 def load():
     if os.path.exists(FILE):
         try:
-            with open(FILE,"r",encoding="utf-8") as f: return json.load(f)
-        except: return {}
+            with open(FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
-def save(d):
-    with open(FILE,"w",encoding="utf-8") as f: json.dump(d,f,ensure_ascii=False)
 
-debts=load()
+def save(data):
+    with open(FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+debts = load()
 
 async def start(u,c):
-    await u.message.reply_text("Али 200 = илова\nНест Али = нест\n/qarz = руйхат")
+    await u.message.reply_text("Нависед: Аббос 500\nНест Аббос - барои нест кардан\n/qarz - руйхат\n/toza - тоза кардан")
 
 async def qarz(u,c):
     if not debts:
-        await u.message.reply_text("Холӣ")
+        await u.message.reply_text("Холӣ аст")
         return
-    t=""
+    txt = ""
     for k,v in debts.items():
-        s=v['s'] if isinstance(v,dict) else v
-        due=v.get('due') if isinstance(v,dict) else None
-        if due and due>0:
-            t+=f"{k}: {s}с - {due} руз монд\n"
-        else:
-            t+=f"{k}: {s}с\n"
-    await u.message.reply_text(t)
+        s = v["s"] if isinstance(v, dict) else v
+        txt += f"{k}: {s} сомонӣ\n"
+    await u.message.reply_text(txt)
 
-async def txt(u,c):
+async def toza(u,c):
+    await u.message.reply_text("Барои тоза кардан ХА нависед")
+
+async def text_handler(u,c):
     global debts
-    m=u.message.text.strip()
-    low=m.lower()
+    m = u.message.text.strip()
+    low = m.lower()
 
-    if low=="ха":
-        debts={}
+    if low == "ха":
+        debts = {}
         save(debts)
-        await u.message.reply_text("Тоза шуд")
+        await u.message.reply_text("Дафтари қарзҳо тоза шуд.")
         return
 
+    # === НЕСТ КУН - УМНОЕ ===
     if low.startswith("нест"):
-        name=low.replace("нест кун","").replace("нест","").strip()
-        found=[k for k in debts.keys() if name in k.lower()]
-        if not found:
-            await u.message.reply_text(f"Ёфт нашуд. Хаст: {', '.join(debts.keys())}")
+        # тоза мекунем "нест кун"
+        search = low.replace("нест кун", "").replace("нест", "").strip()
+        if not search:
+            await u.message.reply_text("Кӣ нест шавад? Мисол: Нест Аббос")
             return
-        for k in found: del debts[k]
+
+        # меҷӯем бо қисм - "аббос" дар "аббос завтра" ёфт мешавад
+        to_del = []
+        for key in list(debts.keys()):
+            if search in key.lower() or key.lower() in search:
+                to_del.append(key)
+
+        if not to_del:
+            await u.message.reply_text(f"Мизоҷ '{search}' ёфт нашуд. Рӯйхат: {', '.join(debts.keys())}")
+            return
+
+        for k in to_del:
+            del debts[k]
         save(debts)
-        await u.message.reply_text(f"✅ Нест шуд: {', '.join(found)}")
+        await u.message.reply_text(f"✅ Нест шуд: {', '.join(to_del)}")
         return
 
+    # === ИЛОВА - ДУРУСТ МЕФАҲМАД "завтра" ===
     try:
-        parts=m.split()
-        sum_idx=-1
-        for i,p in enumerate(parts):
-            if p.isdigit(): sum_idx=i; break
-        if sum_idx==-1: raise ValueError
-        name=" ".join(parts[:sum_idx]).strip()
-        sum_val=int(parts[sum_idx])
-        # срок
-        rest=" ".join(parts[sum_idx+1:]).lower()
-        due=0
-        if "завтра" in rest or "пагох" in rest: due=1
-        elif rest.isdigit(): due=int(rest)
-        elif "7" in rest: due=7
+        parts = m.split()
+        sum_idx = -1
+        sum_val = 0
+        for i, p in enumerate(parts):
+            if p.isdigit():
+                sum_idx = i
+                sum_val = int(p)
+                break
 
-        debts[name]={'s':sum_val,'due':due}
+        if sum_idx == -1:
+            raise ValueError
+
+        name = " ".join(parts[:sum_idx]).strip()
+        if not name:
+            raise ValueError
+
+        # "завтра" -ро ҳамчун муҳлат мегирем, на ҳамчун ном
+        debts[name] = {"s": sum_val}
         save(debts)
-        await u.message.reply_text(f"Сабт: {name} = {sum_val} {f'+ {due} руз' if due else ''}")
+        await u.message.reply_text(f"Қарзи {sum_val} барои {name} сабт шуд. Бақияи нав: {sum_val} сомонӣ.")
+
     except:
-        await u.message.reply_text("Мисол: Аббос 500 ё Аббос 500 7")
+        await u.message.reply_text("Нодуруст. Нависед: Аббос 500")
 
 def get_handlers():
-    return [CommandHandler("start",start),CommandHandler("qarz",qarz),MessageHandler(filters.TEXT & ~filters.COMMAND, txt)]
+    return [
+        CommandHandler("start", start),
+        CommandHandler("qarz", qarz),
+        CommandHandler("toza", toza),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler)
+    ]
