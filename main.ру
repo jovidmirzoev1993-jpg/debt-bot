@@ -22,37 +22,32 @@ def init_db():
 init_db()
 
 def get_keyboard():
-    return ReplyKeyboardMarkup([["📋 Список долгов"], ["➕ Добавить долг", "💰 Долги мне"]], resize_keyboard=True)
+    return ReplyKeyboardMarkup([["Spisok dolgov"], ["Dobavit dolg", "Dolgi mne"]], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Я бот для учета долгов.\n\nНапиши например:\n`Али 5000 за обед`\n\nИли используй кнопки:", reply_markup=get_keyboard(), parse_mode="Markdown")
+    await update.message.reply_text("Privet! Ya bot dlya ucheta dolgov.\n\nNapishi naprimer:\nAli 5000 za obed", reply_markup=get_keyboard())
 
 async def add_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text.startswith("/") or text in ["📋 Список долгов", "➕ Добавить долг", "💰 Долги мне"]:
+    if text.startswith("/") or text in ["Spisok dolgov", "Dobavit dolg", "Dolgi mne"]:
         return
-
     parts = text.split()
     if len(parts) < 2:
-        await update.message.reply_text("Напиши так: Имя Сумма [комментарий]\nПример: Али 5000 за обед")
+        await update.message.reply_text("Napishi tak: Imya Summa [komment]\nPrimer: Ali 5000 za obed")
         return
-
     try:
         name = parts[0]
         amount_str = parts[1].replace(",", ".")
         amount = Decimal(amount_str)
-
         comment = " ".join(parts[2:]) if len(parts) > 2 else ""
-
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("INSERT INTO debts (user_id, name, amount, comment, created_at) VALUES (?,?,?,?,?)",
                       (update.effective_user.id, name, str(amount), comment, datetime.now().isoformat()))
             conn.commit()
-
-        await update.message.reply_text(f"✅ Записал: {name} - {fmt(amount)} {comment}")
+        await update.message.reply_text(f"Zapisal: {name} - {fmt(amount)} {comment}")
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}\nПример: Али 5000 за обед")
+        await update.message.reply_text(f"Oshibka: {e}")
 
 async def list_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -60,27 +55,25 @@ async def list_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c = conn.cursor()
         c.execute("SELECT name, amount, comment FROM debts WHERE user_id=? ORDER BY id DESC", (user_id,))
         rows = c.fetchall()
-
     if not rows:
-        await update.message.reply_text("Долгов пока нет.")
+        await update.message.reply_text("Dolgov poka net.")
         return
-
     total = sum(Decimal(r[1]) for r in rows)
-    msg = "📋 *Твои долги:*\n\n"
+    msg = "Tvoi dolgi:\n\n"
     for name, amount, comment in rows[:50]:
-        msg += f"• {name} - {fmt(Decimal(amount))} {comment}\n"
-    msg += f"\n*Итого: {fmt(total)}*"
-    await update.message.reply_text(msg, parse_mode="Markdown")
+        msg += f"- {name} - {fmt(Decimal(amount))} {comment}\n"
+    msg += f"\nItogo: {fmt(total)}"
+    await update.message.reply_text(msg)
 
 async def debts_to_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Функция 'Долги мне' скоро будет! Пока используй 'Список долгов'")
+    await update.message.reply_text("Funkciya skoro budet!")
 
 if __name__ == "__main__":
     if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN не задан в Render!")
+        raise ValueError("BOT_TOKEN ne zadan!")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex("^📋 Список долгов$"), list_debts))
-    app.add_handler(MessageHandler(filters.Regex("^💰 Долги мне$"), debts_to_me))
+    app.add_handler(MessageHandler(filters.Regex("^Spisok dolgov$"), list_debts))
+    app.add_handler(MessageHandler(filters.Regex("^Dolgi mne$"), debts_to_me))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, add_debt))
     app.run_polling()
