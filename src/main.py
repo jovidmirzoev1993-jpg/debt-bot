@@ -2,7 +2,7 @@ import os
 import threading
 from flask import Flask
 from telegram.ext import ApplicationBuilder
-from src.handlers import get_handlers
+from handlers import get_handlers
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 flask_app = Flask(__name__)
