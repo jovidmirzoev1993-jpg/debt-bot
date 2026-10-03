@@ -12,18 +12,16 @@ flask_app = Flask(__name__)
 def home():
     return "Bot is alive!"
 
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    flask_app.run(host='0.0.0.0', port=port)
-
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("list", list_debts))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+def run_bot():
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("list", list_debts))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.run_polling()
 
 if __name__ == "__main__":
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN ne zadan!")
-    threading.Thread(target=run_flask, daemon=True).start()
-    print("Bot started...")
-    app.run_polling()
+    # Бота запускаем в фоне
+    threading.Thread(target=run_bot).start()
+    # А Flask в главном потоке — так Render не падает
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host='0.0.0.0', port=port)
