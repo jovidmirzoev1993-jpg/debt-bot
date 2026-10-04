@@ -1,106 +1,117 @@
-import os, json, asyncio
+import os, logging, requests
+from collections import defaultdict
 from datetime import datetime
-from aiohttp import web
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
-DATA_FILE = "data/debts.json"
-os.makedirs("data", exist_ok=True)
+SHEET_URL = os.getenv("SHEET_URL")
+logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-
-def load():
-    if not os.path.exists(DATA_FILE): return {}
+def load_data():
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # Конверт старого формата (просто число) в новый (с датой)
-            for k,v in list(data.items()):
-                if isinstance(v, int):
-                    data[k] = {"amount": v, "date": datetime.now().strftime("%d.%m.%Y"), "updated": datetime.now().strftime("%d.%m.%Y %H:%M")}
-            return data
-    except: return {}
+        if not SHEET_URL: return []
+        r = requests.get(SHEET_URL, timeout=15)
+        return r.json() # [{"name":"Аббос","amount":5000,"date":"..."}]
+    except Exception as e:
+        print(f"load error {e}")
+        return []
 
-def save(d):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=2)
+def save_add(name, amount):
+    try:
+        date = datetime.now().strftime("%d.%m.%Y")
+        requests.post(SHEET_URL, json={"action":"add","name":name,"amount":amount,"date":date}, timeout=15)
+    except Exception as e:
+        print(f"save error {e}")
 
-@dp.message(Command("start"))
-async def start(m):
-    await m.answer("✅ V3.3 - Бо санаҳо\n\nАббос 500\nНест Аббос\n/qarz\n/hisob")
+def save_return(name, amount):
+    try:
+        date = datetime.now().strftime("%d.%m.%Y")
+        requests.post(SHEET_URL, json={"action":"add","name":name,"amount":-amount,"date":date}, timeout=15)
+    except: pass
 
-@dp.message(Command("qarz"))
-async def qarz(m):
-    data=load()
-    if not data: await m.answer("📭 Рӯйхат холӣ аст."); return
-    txt="📒 Рӯйхати қарзҳо:\n"
-    for k,v in data.items():
-        amt = v["amount"] if isinstance(v, dict) else v
-        date = v.get("date","") if isinstance(v, dict) else ""
-        txt+=f"• {k}: {amt} сомонӣ - {date}\n"
-    await m.answer(txt)
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Бот пайваст ба Google Диск ✅\nАббос 5000 - қарз додан\nБаргашт Аббос 500 - баргашт\n/qarz - рӯйхат\n/hisob - ҳисобот")
 
-@dp.message(Command("hisob"))
-async def hisob(m):
-    data=load()
-    if not data: await m.answer("💰 Хисоби умумӣ:\nҶамъ: 0 сомонӣ\n📭 Қарз нест"); return
-    total = sum(v["amount"] if isinstance(v, dict) else v for v in data.values())
-    txt=f"💰 Хисоби умумӣ:\n"
-    txt+=f"Ҷамъ: {total} сомонӣ\n"
-    txt+=f"👥 {len(data)} нафар қарздор\n\n"
-    for k,v in data.items():
-        amt = v["amount"] if isinstance(v, dict) else v
-        date = v.get("updated", v.get("date","")) if isinstance(v, dict) else ""
-        txt+=f"• {k}: {amt} - {date}\n"
-    await m.answer(txt)
+async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if not text: return
 
-@dp.message()
-async def all_msg(m):
-    text=m.text.strip()
-    low=text.lower()
-    data=load()
-
-    if "хисоби умумӣ" in low or low=="/hisob":
-        await hisob(m); return
-    if "рӯйхати қарзҳо" in low or low=="/qarz":
-        await qarz(m); return
-    if "қарз додан" in low: await m.answer("Нависед: Аббос 500"); return
-    if "баргашт кард" in low: await m.answer("Нависед: Нест Аббос"); return
-
-    if low.startswith("нест "):
-        name=text[5:].strip()
-        found=None
-        for k in data.keys():
-            if k.lower()==name.lower(): found=k; break
-        if found: del data[found]; save(data); await m.answer(f"✅ {found} нест шуд!")
-        else: await m.answer(f"Ёфт нашуд: {name}")
+    low = text.lower()
+    # Баргашт
+    if low.startswith("баргашт ") or low.startswith("bargasht "):
+        try:
+            parts = text.split()
+            name = parts[1]
+            amount = float(parts[2].replace(",","."))
+            save_return(name, amount)
+            await update.message.reply_text(f"✅ Баргашт: {name} - {amount}")
+        except: await update.message.reply_text("Нависед: Баргашт Аббос 500")
         return
 
-    parts=text.rsplit(" ",1)
-    if len(parts)==2 and parts[1].isdigit():
-        name,summ=parts[0].strip(),int(parts[1])
-        now = datetime.now().strftime("%d.%m.%Y %H:%M")
-        today = datetime.now().strftime("%d.%m.%Y")
-        if name in data and isinstance(data[name], dict):
-            data[name]["amount"] += summ
-            data[name]["updated"] = now
-        elif name in data:
-            data[name] = {"amount": data[name]+summ, "date": today, "updated": now}
-        else:
-            data[name] = {"amount": summ, "date": today, "updated": now}
-        save(data)
-        amt = data[name]["amount"]
-        await m.answer(f"✅ {name} +{summ}. Бақия: {amt} - {now}")
+    # Нест
+    if low.startswith("нест ") or low.startswith("nest "):
+        name = text.split(" ",1)[1].strip()
+        try:
+            requests.post(SHEET_URL, json={"action":"delete","name":name}, timeout=15)
+            await update.message.reply_text(f"✅ {name} нест карда шуд аз база")
+        except: pass
         return
 
-async def handle(request): return web.Response(text="V3.3 OK")
+    # Қарз додан: Аббос 5000
+    parts = text.rsplit(" ",1)
+    if len(parts)!=2: return
+    name, amount_str = parts
+    try:
+        amount = float(amount_str.replace(",","."))
+    except: return
 
-async def main():
-    app=web.Application(); app.add_routes([web.get('/', handle)])
-    runner=web.AppRunner(app); await runner.setup()
-    await web.TCPSite(runner, '0.0.0.0', int(os.getenv("PORT", 10000))).start()
-    await dp.start_polling(bot)
+    save_add(name.strip(), amount)
+    # ҳисоби нав
+    data = load_data()
+    total_for = sum(float(d.get('amount',0)) for d in data if d.get('name','').lower()==name.strip().lower())
+    await update.message.reply_text(f"Қарзи {amount} барои {name} сабт шуд.\nБақияи нав: {total_for} сомонӣ.")
 
-if __name__=="__main__": asyncio.run(main())
+async def qarz(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    data = load_data()
+    if not data:
+        await update.message.reply_text("Рӯйхат холӣ аст.")
+        return
+
+    sums = defaultdict(float)
+    last_date = {}
+    for d in data:
+        n = d.get('name','').strip()
+        if not n: continue
+        sums[n] += float(d.get('amount',0))
+        last_date[n] = d.get('date','')
+
+    # фақат қарздорон бо бақия > 0
+    active = {k:v for k,v in sums.items() if v>0.01}
+    if not active:
+        await update.message.reply_text("Ҳама қарзҳо баргаштанд ✅")
+        return
+
+    msg = "📒 Дафтари қарз:\n"
+    i=1
+    total=0
+    for name, bal in active.items():
+        msg+=f"{i}. {name} — {bal:g} сомонӣ — {last_date.get(name,'')}\n"
+        total+=bal
+        i+=1
+    msg+=f"💰 Ҷамъ: {total:g} сомонӣ\n👥 {len(active)} нафар қарздор"
+    await update.message.reply_text(msg)
+
+async def hisob(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await qarz(update, ctx)
+
+def main():
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("qarz", qarz))
+    app.add_handler(CommandHandler("hisob", hisob))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.run_polling()
+
+if __name__=="__main__":
+    main()
